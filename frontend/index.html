@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>组合视频检索系统</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div>
+            <p class="eyebrow">AIM + FDCA</p>
+            <h1>基于深度学习的组合视频检索</h1>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <label class="switch-control" title="打开后搜索结果会展示模型分支分数">
+            <input id="debugToggle" type="checkbox" />
+            <span class="switch-track" aria-hidden="true"></span>
+            <span>调试视图</span>
+          </label>
+        </div>
+      </header>
+
+      <main class="main-layout">
+        <section class="panel library-panel" aria-labelledby="libraryTitle">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Reference</p>
+              <h2 id="libraryTitle">参考视频库</h2>
+            </div>
+            <span id="videoCount" class="metric-pill">0 条</span>
+          </div>
+
+          <div id="selectedPreview" class="selected-preview is-empty">
+            <div class="preview-frame" aria-hidden="true"></div>
+            <div>
+              <p class="muted">当前参考视频</p>
+              <strong>尚未选择</strong>
+            </div>
+          </div>
+
+          <div id="videoGrid" class="video-grid" aria-live="polite"></div>
+
+          <div class="panel-footer">
+            <p id="videoStatus" class="status-text"></p>
+            <button id="loadMoreBtn" class="button button-secondary" type="button">
+              加载更多
+            </button>
+          </div>
+        </section>
+
+        <section class="panel results-panel" aria-labelledby="resultsTitle">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Results</p>
+              <h2 id="resultsTitle">检索结果</h2>
+            </div>
+            <span id="queryIdBadge" class="metric-pill is-muted">等待检索</span>
+          </div>
+
+          <div id="resultNotice" class="notice" hidden></div>
+          <div id="resultsArea" class="results-area" aria-live="polite">
+            <div class="empty-state">
+              <div class="empty-icon" aria-hidden="true">⌁</div>
+              <h3>选择参考视频后开始检索</h3>
+              <p>输入自然语言修改指令，系统会返回与组合语义最接近的视频。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="query-panel" aria-labelledby="queryTitle">
+          <div class="query-title">
+            <div>
+              <p class="section-kicker">Query</p>
+              <h2 id="queryTitle">组合查询</h2>
+            </div>
+            <label class="topk-control" for="topKInput">
+              <span>返回数量</span>
+              <input id="topKInput" type="number" min="1" max="50" value="20" />
+            </label>
+          </div>
+
+          <form id="searchForm" class="query-form">
+            <label class="field field-main" for="modificationText">
+              <span>修改文本</span>
+              <textarea
+                id="modificationText"
+                name="modification_text"
+                rows="3"
+                placeholder="例如：把跑步换成走路，保持室外场景"
+                required
+              ></textarea>
+            </label>
+
+            <div class="query-actions">
+              <button id="advancedToggle" class="text-button" type="button" aria-expanded="false">
+                高级模式
+              </button>
+              <button id="searchBtn" class="button button-primary" type="submit" disabled>
+                开始检索
+              </button>
+            </div>
+
+            <div id="advancedFields" class="advanced-fields" hidden>
+              <label class="field" for="retainText">
+                <span>保留内容</span>
+                <input
+                  id="retainText"
+                  name="retain_text"
+                  type="text"
+                  placeholder="例如：保留人物、机位和背景"
+                />
+              </label>
+              <label class="field" for="excludeText">
+                <span>排除内容</span>
+                <input
+                  id="excludeText"
+                  name="exclude_text"
+                  type="text"
+                  placeholder="例如：不要出现车辆或多人"
+                />
+              </label>
+            </div>
+
+            <p id="formHint" class="form-hint">请选择一个参考视频并输入修改文本。</p>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="previewDialog" class="preview-dialog">
+      <button id="closePreviewBtn" class="dialog-close" type="button" aria-label="关闭预览">×</button>
+      <div id="dialogMedia" class="dialog-media"></div>
+      <div class="dialog-meta">
+        <div>
+          <p id="dialogId" class="muted"></p>
+          <h3 id="dialogTitle"></h3>
+        </div>
+        <span id="dialogDuration" class="metric-pill"></span>
+      </div>
+    </dialog>
+
+    <template id="skeletonTemplate">
+      <article class="result-card skeleton-card">
+        <div class="thumb skeleton-block"></div>
+        <div class="skeleton-line wide"></div>
+        <div class="skeleton-line"></div>
+      </article>
+    </template>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
