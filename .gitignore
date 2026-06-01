@@ -1,1 +1,11 @@
 frontend/server*.log
+
+# Python env + caches
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# Large model weights, build artifacts, and build inputs (kept locally, not in git)
+backend/weights/
+backend/artifacts/
+backend/data/

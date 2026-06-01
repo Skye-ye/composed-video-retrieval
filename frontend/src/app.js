@@ -63,8 +63,6 @@ class ApiError extends Error {
   }
 }
 
-init();
-
 function init() {
   bindEvents();
   renderAll();
@@ -832,3 +830,8 @@ function delay(ms) {
     window.setTimeout(resolve, ms);
   });
 }
+
+// Start the app only after every top-level declaration above (notably `const api`)
+// has initialized — calling init() earlier hits a temporal-dead-zone ReferenceError
+// in loadVideos() ("Cannot access 'api' before initialization").
+init();
