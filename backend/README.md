@@ -59,6 +59,7 @@ curl http://localhost:8000/health
 ```
 
 Env vars (see `config.py`): `FDCA_ARTIFACTS_DIR`, `FDCA_CKPT`, `FDCA_FRAMES_DIR`,
+`FDCA_ANNOTATIONS_DIR` (video_id → frame-subfolder map, see Thumbnails),
 `FDCA_CLIP_MODEL` (default `ViT-L/14`), `FDCA_DEVICE` (`cpu`/`cuda`),
 `FDCA_THRESHOLD` (low-confidence cutoff, default `0.3`), `FDCA_CORS_ORIGINS`.
 
@@ -90,18 +91,26 @@ Env vars (see `config.py`): `FDCA_ARTIFACTS_DIR`, `FDCA_CKPT`, `FDCA_FRAMES_DIR`
 `thumbnail_url` in every API response drives the frontend tiles (`null` →
 placeholder). Two ways to fill it, no code changes:
 
-**A. Dynamic from the gallery (recommended).** Point one env var at the per-video
-frame folders; the server serves a mid-frame at `/api/thumb/<video_id>` — no index
-rebuild, no copying:
+**A. Dynamic from the gallery (recommended).** Point `FDCA_FRAMES_DIR` at the frames
+root and `FDCA_ANNOTATIONS_DIR` at the annotations; the server serves a mid-frame at
+`/api/thumb/<video_id>` — no index rebuild, no copying:
 
 ```bash
-FDCA_FRAMES_DIR=/path/to/video uv run uvicorn app:app --port 8000
+FDCA_FRAMES_DIR=/path/to/frames_root \
+FDCA_ANNOTATIONS_DIR=/path/to/annotations \
+uv run uvicorn app:app --port 8000
 ```
 
-Expected layout `FDCA_FRAMES_DIR/<video_id>/<frames>.jpg` (same ids as the `.npy`
-files; server picks the middle frame and caches the choice). `/health` then reports
-`"thumbnails":"gallery"`. Unknown ids 404 (membership check also blocks path
-traversal). Unset → `thumbnail_url` is `null` → placeholders.
+Frames are laid out **per source dataset**, not flat:
+`FDCA_FRAMES_DIR/<dataset>_frames/<video_id>/<frames>.jpg` (e.g. `hvu_frames/`,
+`an_frames/`, `msrvtt_frames/`, `ag_frames/`). The server reads each split's
+`id2file.json` + `id2path.json` under `FDCA_ANNOTATIONS_DIR` to map every `video_id`
+to its real subfolder, picks the middle frame, and caches the choice. For gallery
+ids absent from the annotations it probes each `<dataset>_frames/<id>` then the flat
+`FDCA_FRAMES_DIR/<id>`. `/health` reports `"thumbnails":"gallery"` plus a
+`frame_index` with the mapped-id count and dataset list. Unknown ids 404 (membership
+check also blocks path traversal). `FDCA_ANNOTATIONS_DIR` unset → flat layout only;
+`FDCA_FRAMES_DIR` unset → `thumbnail_url` is `null` → placeholders.
 
 **B. Bake static thumbnails at build time.** `build_index.py --video-root <dir>`
 copies one mid-frame per video into `artifacts/thumbs/<id>.jpg` and serves it from

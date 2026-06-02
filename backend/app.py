@@ -25,6 +25,7 @@ from pathlib import Path
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # torch+faiss OpenMP on macOS
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # make backend/ importable
 
+import json  # noqa: E402
 import uuid  # noqa: E402
 
 import numpy as np  # noqa: E402
@@ -54,9 +55,55 @@ if config.ARTIFACTS_DIR.is_dir():
 
 # Dynamic thumbnails straight from the gallery frame folders (no copy, no rebuild):
 # set FDCA_FRAMES_DIR and the server serves a mid-frame at /api/thumb/<video_id>.
+# Frames are laid out per source dataset (hvu_frames/<id>/, an_frames/<id>/, ...),
+# not flat, so FDCA_ANNOTATIONS_DIR provides the video_id -> real-subfolder map.
 _FRAMES_ROOT = Path(config.FRAMES_DIR) if config.FRAMES_DIR else None
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 _frame_cache: dict[str, str | None] = {}
+
+
+def _load_frame_index(ann_dir: Path) -> tuple[dict[str, str], list[str]]:
+    """Map each gallery video_id to its frame subfolder via the annotation json.
+
+    Reads every ``<split>/{id2file.json,id2path.json}`` pair (id2file: idx -> id,
+    id2path: idx -> ``<dataset>_frames/<id>``) and joins them by index. Returns the
+    ``{video_id: relpath}`` map and the distinct dataset prefixes, the latter used
+    to probe ids the annotations don't cover.
+    """
+    rel: dict[str, str] = {}
+    for split in sorted(p.name for p in ann_dir.iterdir() if p.is_dir()):
+        f_path, p_path = ann_dir / split / "id2file.json", ann_dir / split / "id2path.json"
+        if not (f_path.is_file() and p_path.is_file()):
+            continue
+        files = json.loads(f_path.read_text(encoding="utf-8"))
+        paths = json.loads(p_path.read_text(encoding="utf-8"))
+        for idx, vid in files.items():
+            if idx in paths:
+                rel[vid] = paths[idx]
+    prefixes = sorted({r.split("/", 1)[0] for r in rel.values() if "/" in r})
+    return rel, prefixes
+
+
+_id_to_relpath: dict[str, str] = {}
+_frame_prefixes: list[str] = []
+if _FRAMES_ROOT is not None and config.ANNOTATIONS_DIR:
+    _ann_dir = Path(config.ANNOTATIONS_DIR)
+    if _ann_dir.is_dir():
+        _id_to_relpath, _frame_prefixes = _load_frame_index(_ann_dir)
+
+
+def _frame_candidates(video_id: str, root: Path) -> list[Path]:
+    """Folders that might hold this video's frames, most-likely first.
+
+    Authoritative annotation path when known; otherwise probe each known dataset
+    subfolder (so extra frames on disk still resolve) and finally the flat layout.
+    """
+    rel = _id_to_relpath.get(video_id)
+    if rel is not None:
+        return [root / rel]
+    cands = [root / pfx / video_id for pfx in _frame_prefixes]
+    cands.append(root / video_id)
+    return cands
 
 
 def _resolve_frame(video_id: str) -> str | None:
@@ -68,14 +115,15 @@ def _resolve_frame(video_id: str) -> str | None:
         return _frame_cache[video_id]
     frame = None
     if _FRAMES_ROOT is not None:
-        folder = _FRAMES_ROOT / video_id
-        if folder.is_dir():
-            imgs = sorted(
-                f for f in folder.iterdir()
-                if f.is_file() and f.suffix.lower() in _IMG_EXT
-            )
-            if imgs:
-                frame = str(imgs[len(imgs) // 2])
+        for folder in _frame_candidates(video_id, _FRAMES_ROOT):
+            if folder.is_dir():
+                imgs = sorted(
+                    f for f in folder.iterdir()
+                    if f.is_file() and f.suffix.lower() in _IMG_EXT
+                )
+                if imgs:
+                    frame = str(imgs[len(imgs) // 2])
+                    break
     _frame_cache[video_id] = frame
     return frame
 
@@ -249,8 +297,14 @@ def thumb(video_id: str):
 
 @app.get("/health")
 def health():
-    return {
+    info = {
         "status": "ok",
         "gallery_size": len(_rt().row_to_id),
         "thumbnails": "gallery" if _FRAMES_ROOT is not None else "placeholders",
     }
+    if _id_to_relpath:
+        info["frame_index"] = {
+            "mapped_ids": len(_id_to_relpath),
+            "datasets": _frame_prefixes,
+        }
+    return info

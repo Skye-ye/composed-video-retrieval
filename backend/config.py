@@ -20,12 +20,20 @@ _HERE = Path(__file__).resolve().parent
 ARTIFACTS_DIR = Path(os.getenv("FDCA_ARTIFACTS_DIR", _HERE / "artifacts"))
 CKPT_PATH = Path(os.getenv("FDCA_CKPT", _HERE / "weights" / "fdca_aim.serve.pth"))
 
-# Optional: root dir of per-video frame folders (the gallery, e.g. <dataset>/video).
+# Optional: root dir that CONTAINS the per-dataset frame folders (e.g. it holds
+# hvu_frames/, an_frames/, msrvtt_frames/, ag_frames/, each with <video_id>/ inside).
 # When set, the server serves a mid-frame per video at /api/thumb/<video_id> — no
 # index rebuild, no copying. Leave empty (default) → thumbnail_url is null and the
 # frontend shows placeholder tiles. Set this when you deploy on the Linux box that
-# has the gallery:  FDCA_FRAMES_DIR=/path/to/dataset/video
+# has the gallery:  FDCA_FRAMES_DIR=/path/to/frames_root
 FRAMES_DIR = os.getenv("FDCA_FRAMES_DIR", "")
+
+# Optional: the annotations dir (holds <split>/id2file.json + id2path.json) that
+# maps each gallery video_id to its real frame subfolder, e.g. hvu_frames/<id>.
+# Set this alongside FDCA_FRAMES_DIR whenever frames are laid out per-dataset
+# rather than flat. Unset → the server falls back to a flat FRAMES_DIR/<id>/ layout
+# plus a dataset-prefix probe.  FDCA_ANNOTATIONS_DIR=/path/to/annotations
+ANNOTATIONS_DIR = os.getenv("FDCA_ANNOTATIONS_DIR", "")
 # ViT-L/14 (feature_dim 768) — matches the trained checkpoint and the 768-dim
 # AIM embeddings. NOT RN50x4 (640) from configs/model/fdca.yaml, which is stale.
 CLIP_MODEL_NAME = os.getenv("FDCA_CLIP_MODEL", "ViT-L/14")
