@@ -399,22 +399,6 @@ video {
   line-height: 1.35;
 }
 
-.duration-badge {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: inline-flex;
-  min-height: 22px;
-  padding: 3px 7px;
-  align-items: center;
-  border-radius: 999px;
-  color: #ffffff;
-  background: rgba(31, 37, 35, 0.78);
-  font-size: 12px;
-  font-weight: 700;
-  backdrop-filter: blur(8px);
-}
-
 .video-card-body,
 .result-card-body {
   padding: 10px;

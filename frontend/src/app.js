@@ -48,7 +48,6 @@ const els = {
   dialogMedia: document.querySelector("#dialogMedia"),
   dialogId: document.querySelector("#dialogId"),
   dialogTitle: document.querySelector("#dialogTitle"),
-  dialogDuration: document.querySelector("#dialogDuration"),
   skeletonTemplate: document.querySelector("#skeletonTemplate"),
 };
 
@@ -499,15 +498,12 @@ function createThumb(item, previewable) {
   }
 
   if (item.thumbnail_url) {
-    holder.append(createImage(item.thumbnail_url, getVideoTitle(item)));
+    const img = createImage(item.thumbnail_url, getVideoTitle(item));
+    holder.append(img);
+    attachHoverLoop(holder, img, item);
   } else {
     holder.append(createThumbPlaceholder(item.video_id || "No Preview"));
   }
-
-  const duration = document.createElement("span");
-  duration.className = "duration-badge";
-  duration.textContent = formatDuration(item.duration_sec);
-  holder.append(duration);
 
   return holder;
 }
@@ -551,8 +547,100 @@ function createVideoSkeleton() {
   return skeleton;
 }
 
+// Frame-animation plumbing: the backend serves one frame per video by default but
+// exposes the full set via /api/frames/<id>; here we loop those frames (~8 fps) so a
+// preview "plays" like a short silent clip. previewToken invalidates an in-flight
+// loader when a newer preview opens or the dialog closes (async fetch/preload races).
+const FRAME_FPS = 8;
+const framesCache = new Map(); // video_id -> Promise<string[]> (resolved frame URLs)
+let previewTimer = null;
+let previewToken = 0;
+
+function stopPreviewLoop() {
+  if (previewTimer !== null) {
+    window.clearInterval(previewTimer);
+    previewTimer = null;
+  }
+}
+
+function preloadImage(src) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(true);
+    im.onerror = () => resolve(false);
+    im.src = src;
+  });
+}
+
+function loadFrameUrls(videoId) {
+  if (framesCache.has(videoId)) return framesCache.get(videoId);
+  const promise = api
+    .frames(videoId)
+    .then((data) => (Array.isArray(data.frames) ? data.frames.map(resolveAssetUrl) : []))
+    .catch(() => []);
+  framesCache.set(videoId, promise);
+  return promise;
+}
+
+// Cycle `img.src` through the video's frames. `isCurrent` lets the caller abort if
+// the context changed (dialog closed, mouse left) during the async fetch/preload.
+async function animateFrames(img, videoId, intervalMs, isCurrent, setTimer) {
+  if (USE_MOCK || !videoId) return; // mock data has no real frame folders to fetch
+  const urls = await loadFrameUrls(videoId);
+  if (!isCurrent() || urls.length < 2) return;
+
+  const loaded = await Promise.all(urls.map(preloadImage));
+  const good = urls.filter((_, index) => loaded[index]);
+  if (!isCurrent() || good.length < 2) return;
+
+  let index = 0;
+  const timer = window.setInterval(() => {
+    index = (index + 1) % good.length;
+    img.src = good[index];
+  }, intervalMs);
+  setTimer(timer);
+}
+
+// Tiles play on hover. A short hover-intent delay avoids firing requests for tiles
+// the pointer merely sweeps across; leaving restores the static poster frame.
+function attachHoverLoop(holder, img, item) {
+  if (USE_MOCK || !item?.video_id) return;
+  const poster = img.src;
+  let hoverTimer = null;
+  let loopTimer = null;
+  let hovering = false;
+
+  const stop = () => {
+    hovering = false;
+    if (hoverTimer !== null) {
+      window.clearTimeout(hoverTimer);
+      hoverTimer = null;
+    }
+    if (loopTimer !== null) {
+      window.clearInterval(loopTimer);
+      loopTimer = null;
+    }
+    if (img.src !== poster) img.src = poster;
+  };
+
+  holder.addEventListener("mouseenter", () => {
+    hovering = true;
+    hoverTimer = window.setTimeout(() => {
+      animateFrames(img, item.video_id, Math.round(1000 / FRAME_FPS), () => hovering, (t) => {
+        if (loopTimer !== null) window.clearInterval(loopTimer);
+        loopTimer = t;
+      });
+    }, 180);
+  });
+  holder.addEventListener("mouseleave", stop);
+}
+
 function openPreview(item) {
+  stopPreviewLoop();
+  const token = ++previewToken;
   els.dialogMedia.replaceChildren();
+  els.dialogId.textContent = item.video_id || "";
+  els.dialogTitle.textContent = getVideoTitle(item);
 
   if (item.video_url) {
     const video = document.createElement("video");
@@ -563,13 +651,13 @@ function openPreview(item) {
   } else if (item.thumbnail_url) {
     const img = createImage(item.thumbnail_url, getVideoTitle(item));
     els.dialogMedia.append(img);
+    animateFrames(img, item.video_id, Math.round(1000 / FRAME_FPS), () => token === previewToken, (t) => {
+      if (previewTimer !== null) window.clearInterval(previewTimer);
+      previewTimer = t;
+    });
   } else {
     els.dialogMedia.append(createThumbPlaceholder("预览不可用"));
   }
-
-  els.dialogId.textContent = item.video_id || "";
-  els.dialogTitle.textContent = getVideoTitle(item);
-  els.dialogDuration.textContent = formatDuration(item.duration_sec);
 
   if (typeof els.previewDialog.showModal === "function") {
     els.previewDialog.showModal();
@@ -579,6 +667,9 @@ function openPreview(item) {
 }
 
 function closePreview() {
+  stopPreviewLoop();
+  previewToken += 1; // abort any in-flight frame loader for this preview
+
   const video = els.dialogMedia.querySelector("video");
   if (video) {
     video.pause();
@@ -609,18 +700,6 @@ function getVideoTitle(video) {
 function normalizeOptionalText(value) {
   const text = value.trim();
   return text.length > 0 ? text : null;
-}
-
-function formatDuration(seconds) {
-  const value = Number(seconds);
-  if (!Number.isFinite(value) || value < 0) return "--";
-  if (value < 60) return `${value.toFixed(value % 1 === 0 ? 0 : 1)}s`;
-
-  const minutes = Math.floor(value / 60);
-  const rest = Math.round(value % 60)
-    .toString()
-    .padStart(2, "0");
-  return `${minutes}:${rest}`;
 }
 
 function scoreToPercent(value) {
@@ -681,6 +760,10 @@ const api = {
       },
       body: JSON.stringify(payload),
     });
+  },
+
+  async frames(videoId, n = 16) {
+    return requestJson(apiUrl(`/api/frames/${encodeURIComponent(videoId)}`, { n }));
   },
 };
 

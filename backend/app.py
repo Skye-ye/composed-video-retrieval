@@ -59,7 +59,7 @@ if config.ARTIFACTS_DIR.is_dir():
 # not flat, so FDCA_ANNOTATIONS_DIR provides the video_id -> real-subfolder map.
 _FRAMES_ROOT = Path(config.FRAMES_DIR) if config.FRAMES_DIR else None
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-_frame_cache: dict[str, str | None] = {}
+_frames_cache: dict[str, list[str]] = {}  # video_id -> sorted frame file paths
 
 
 def _load_frame_index(ann_dir: Path) -> tuple[dict[str, str], list[str]]:
@@ -106,14 +106,15 @@ def _frame_candidates(video_id: str, root: Path) -> list[Path]:
     return cands
 
 
-def _resolve_frame(video_id: str) -> str | None:
-    """Filesystem path to a representative (mid) frame for video_id, or None.
+def _list_frames(video_id: str) -> list[str]:
+    """All frame image paths for video_id, sorted, or ``[]`` — cached.
 
-    Cached: the chosen filename is stable, so each folder is listed at most once.
+    Lists the first candidate folder that exists and holds images, so each
+    video's folder is scanned at most once.
     """
-    if video_id in _frame_cache:
-        return _frame_cache[video_id]
-    frame = None
+    if video_id in _frames_cache:
+        return _frames_cache[video_id]
+    frames: list[str] = []
     if _FRAMES_ROOT is not None:
         for folder in _frame_candidates(video_id, _FRAMES_ROOT):
             if folder.is_dir():
@@ -122,10 +123,38 @@ def _resolve_frame(video_id: str) -> str | None:
                     if f.is_file() and f.suffix.lower() in _IMG_EXT
                 )
                 if imgs:
-                    frame = str(imgs[len(imgs) // 2])
+                    frames = [str(p) for p in imgs]
                     break
-    _frame_cache[video_id] = frame
-    return frame
+    _frames_cache[video_id] = frames
+    return frames
+
+
+def _sample_indices(total: int, n: int) -> list[int]:
+    """Up to ``n`` evenly-spaced indices over ``range(total)``, endpoints included."""
+    if total <= 0:
+        return []
+    if n >= total:
+        return list(range(total))
+    if n <= 1:
+        return [total // 2]
+    out: list[int] = []
+    seen: set[int] = set()
+    for i in range(n):
+        j = round(i * (total - 1) / (n - 1))
+        if j not in seen:  # round can collide when total is barely above n
+            seen.add(j)
+            out.append(j)
+    return out
+
+
+def _resolve_frame(video_id: str, index: int | None = None) -> str | None:
+    """One frame path for video_id: the middle by default, or a specific index
+    into the sorted frame list. None if there are no frames / index is out of range."""
+    frames = _list_frames(video_id)
+    if not frames:
+        return None
+    i = len(frames) // 2 if index is None else index
+    return frames[i] if 0 <= i < len(frames) else None
 
 
 def _thumb_url(video_id: str, meta: dict) -> str | None:
@@ -283,16 +312,33 @@ def search(req: SearchRequest):
 
 
 @app.get("/api/thumb/{video_id}")
-def thumb(video_id: str):
+def thumb(video_id: str, i: int | None = None):
     rt = _rt()
     # has_video() doubles as authorization + path-traversal guard: only ids that
     # exist in the gallery id_map are ever turned into a filesystem path.
     if _FRAMES_ROOT is None or not rt.has_video(video_id):
         raise ApiError(404, "NOT_FOUND", "thumbnail not available")
-    frame = _resolve_frame(video_id)
+    frame = _resolve_frame(video_id, i)  # i=None -> middle frame (the default poster)
     if frame is None:
         raise ApiError(404, "NOT_FOUND", "no frame for video")
     return FileResponse(frame, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/frames/{video_id}")
+def frames(video_id: str, n: int = 16):
+    """Up to ``n`` evenly-spaced frame URLs for video_id, for the animated preview.
+
+    Each URL points back at /api/thumb/<id>?i=<index>; the frontend loops them.
+    """
+    rt = _rt()
+    if _FRAMES_ROOT is None or not rt.has_video(video_id):
+        raise ApiError(404, "NOT_FOUND", "frames not available")
+    total = len(_list_frames(video_id))
+    if total == 0:
+        raise ApiError(404, "NOT_FOUND", "no frames for video")
+    n = max(1, min(int(n), 64))
+    urls = [f"/api/thumb/{video_id}?i={i}" for i in _sample_indices(total, n)]
+    return {"frames": urls, "count": total}
 
 
 @app.get("/health")
